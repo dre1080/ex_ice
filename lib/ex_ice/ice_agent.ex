@@ -6,9 +6,11 @@ defmodule ExICE.ICEAgent do
   """
   use GenServer
 
-  require Logger
+  alias ExICE.Candidate
+  alias ExICE.CandidatePair
+  alias ExICE.Priv.ICEAgent
 
-  alias ExICE.{Candidate, CandidatePair}
+  require Logger
 
   @typedoc """
   ICE agent role.
@@ -93,6 +95,21 @@ defmodule ExICE.ICEAgent do
   @spec start_link(opts()) :: GenServer.on_start()
   def start_link(opts \\ []) when is_list(opts) do
     GenServer.start_link(__MODULE__, opts ++ [controlling_process: self()])
+  end
+
+  @spec start_link(ExICE.Agent.role(), opts()) :: GenServer.on_start()
+  def start_link(role, opts) when is_list(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+
+    opts =
+      opts
+      |> Keyword.put(:role, role)
+      |> Keyword.put(:controlling_process, self())
+
+    case name do
+      nil -> GenServer.start_link(__MODULE__, opts)
+      name -> GenServer.start_link(__MODULE__, opts, name: name)
+    end
   end
 
   @doc """
@@ -184,8 +201,7 @@ defmodule ExICE.ICEAgent do
   Call to this function is mandatory to start connectivity checks.
   """
   @spec set_remote_credentials(pid(), binary(), binary()) :: :ok
-  def set_remote_credentials(ice_agent, ufrag, passwd)
-      when is_binary(ufrag) and is_binary(passwd) do
+  def set_remote_credentials(ice_agent, ufrag, passwd) when is_binary(ufrag) and is_binary(passwd) do
     GenServer.cast(ice_agent, {:set_remote_credentials, ufrag, passwd})
   end
 
@@ -281,79 +297,79 @@ defmodule ExICE.ICEAgent do
 
   @impl true
   def init(opts) do
-    ice_agent = ExICE.Priv.ICEAgent.new(opts)
+    ice_agent = ICEAgent.new(opts)
     {:ok, %{ice_agent: ice_agent, pending_eoc: false, pending_remote_cands: MapSet.new()}}
   end
 
   @impl true
   def handle_call({:on_gathering_state_change, send_to}, _from, state) do
-    ice_agent = ExICE.Priv.ICEAgent.on_gathering_state_change(state.ice_agent, send_to)
+    ice_agent = ICEAgent.on_gathering_state_change(state.ice_agent, send_to)
     {:reply, :ok, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_call({:on_connection_state_change, send_to}, _from, state) do
-    ice_agent = ExICE.Priv.ICEAgent.on_connection_state_change(state.ice_agent, send_to)
+    ice_agent = ICEAgent.on_connection_state_change(state.ice_agent, send_to)
     {:reply, :ok, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_call({:on_data, send_to}, _from, state) do
-    ice_agent = ExICE.Priv.ICEAgent.on_data(state.ice_agent, send_to)
+    ice_agent = ICEAgent.on_data(state.ice_agent, send_to)
     {:reply, :ok, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_call({:on_new_candidate, send_to}, _from, state) do
-    ice_agent = ExICE.Priv.ICEAgent.on_new_candidate(state.ice_agent, send_to)
+    ice_agent = ICEAgent.on_new_candidate(state.ice_agent, send_to)
     {:reply, :ok, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_call(:get_role, _from, state) do
-    role = ExICE.Priv.ICEAgent.get_role(state.ice_agent)
+    role = ICEAgent.get_role(state.ice_agent)
     {:reply, role, state}
   end
 
   @impl true
   def handle_call(:get_local_credentials, _from, state) do
-    {local_ufrag, local_pwd} = ExICE.Priv.ICEAgent.get_local_credentials(state.ice_agent)
+    {local_ufrag, local_pwd} = ICEAgent.get_local_credentials(state.ice_agent)
     {:reply, {:ok, local_ufrag, local_pwd}, state}
   end
 
   @impl true
   def handle_call(:get_local_candidates, _from, state) do
-    candidates = ExICE.Priv.ICEAgent.get_local_candidates(state.ice_agent)
+    candidates = ICEAgent.get_local_candidates(state.ice_agent)
     {:reply, candidates, state}
   end
 
   @impl true
   def handle_call(:get_remote_candidates, _from, state) do
-    candidates = ExICE.Priv.ICEAgent.get_remote_candidates(state.ice_agent)
+    candidates = ICEAgent.get_remote_candidates(state.ice_agent)
     {:reply, candidates, state}
   end
 
   @impl true
   def handle_call(:get_stats, _from, state) do
-    stats = ExICE.Priv.ICEAgent.get_stats(state.ice_agent)
+    stats = ICEAgent.get_stats(state.ice_agent)
     {:reply, stats, state}
   end
 
   @impl true
   def handle_cast({:set_role, role}, state) do
-    ice_agent = ExICE.Priv.ICEAgent.set_role(state.ice_agent, role)
+    ice_agent = ICEAgent.set_role(state.ice_agent, role)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_cast({:set_remote_credentials, ufrag, pwd}, state) do
-    ice_agent = ExICE.Priv.ICEAgent.set_remote_credentials(state.ice_agent, ufrag, pwd)
+    ice_agent = ICEAgent.set_remote_credentials(state.ice_agent, ufrag, pwd)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_cast(:gather_candidates, state) do
-    ice_agent = ExICE.Priv.ICEAgent.gather_candidates(state.ice_agent)
+    ice_agent = ICEAgent.gather_candidates(state.ice_agent)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
@@ -363,7 +379,7 @@ defmodule ExICE.ICEAgent do
       Task.async(fn ->
         Logger.debug("Unmarshalling remote candidate: #{remote_cand}")
 
-        case ExICE.Priv.ICEAgent.unmarshal_remote_candidate(remote_cand) do
+        case ICEAgent.unmarshal_remote_candidate(remote_cand) do
           {:ok, cand} -> {:unmarshal_task, {:ok, cand, remote_cand}}
           {:error, reason} -> {:unmarshal_task, {:error, reason, remote_cand}}
         end
@@ -377,7 +393,7 @@ defmodule ExICE.ICEAgent do
   @impl true
   def handle_cast(:end_of_candidates, state) do
     if MapSet.size(state.pending_remote_cands) == 0 do
-      ice_agent = ExICE.Priv.ICEAgent.end_of_candidates(state.ice_agent)
+      ice_agent = ICEAgent.end_of_candidates(state.ice_agent)
       {:noreply, %{state | ice_agent: ice_agent}}
     else
       {:noreply, %{state | pending_eoc: true}}
@@ -386,55 +402,55 @@ defmodule ExICE.ICEAgent do
 
   @impl true
   def handle_cast({:send_data, data}, state) do
-    ice_agent = ExICE.Priv.ICEAgent.send_data(state.ice_agent, data)
+    ice_agent = ICEAgent.send_data(state.ice_agent, data)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_cast(:restart, state) do
-    ice_agent = ExICE.Priv.ICEAgent.restart(state.ice_agent)
+    ice_agent = ICEAgent.restart(state.ice_agent)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_info(:ta_timeout, state) do
-    ice_agent = ExICE.Priv.ICEAgent.handle_ta_timeout(state.ice_agent)
+    ice_agent = ICEAgent.handle_ta_timeout(state.ice_agent)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_info({:tr_rtx_timeout, tr_id}, state) do
-    ice_agent = ExICE.Priv.ICEAgent.handle_tr_rtx_timeout(state.ice_agent, tr_id)
+    ice_agent = ICEAgent.handle_tr_rtx_timeout(state.ice_agent, tr_id)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_info(:eoc_timeout, state) do
-    ice_agent = ExICE.Priv.ICEAgent.handle_eoc_timeout(state.ice_agent)
+    ice_agent = ICEAgent.handle_eoc_timeout(state.ice_agent)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_info(:pair_timeout, state) do
-    ice_agent = ExICE.Priv.ICEAgent.handle_pair_timeout(state.ice_agent)
+    ice_agent = ICEAgent.handle_pair_timeout(state.ice_agent)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_info({:keepalive_timeout, id}, state) do
-    ice_agent = ExICE.Priv.ICEAgent.handle_keepalive_timeout(state.ice_agent, id)
+    ice_agent = ICEAgent.handle_keepalive_timeout(state.ice_agent, id)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_info({:udp, socket, src_ip, src_port, packet}, state) do
-    ice_agent = ExICE.Priv.ICEAgent.handle_udp(state.ice_agent, socket, src_ip, src_port, packet)
+    ice_agent = ICEAgent.handle_udp(state.ice_agent, socket, src_ip, src_port, packet)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
   @impl true
   def handle_info({:ex_turn, ref, msg}, state) do
-    ice_agent = ExICE.Priv.ICEAgent.handle_ex_turn_msg(state.ice_agent, ref, msg)
+    ice_agent = ICEAgent.handle_ex_turn_msg(state.ice_agent, ref, msg)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
@@ -446,7 +462,7 @@ defmodule ExICE.ICEAgent do
     Unmarshaled candidate: #{inspect(cand)}
     """)
 
-    ice_agent = ExICE.Priv.ICEAgent.add_remote_candidate(state.ice_agent, cand)
+    ice_agent = ICEAgent.add_remote_candidate(state.ice_agent, cand)
     {:noreply, %{state | ice_agent: ice_agent}}
   end
 
@@ -467,7 +483,7 @@ defmodule ExICE.ICEAgent do
       state = %{state | pending_remote_cands: pending_remote_cands}
 
       if MapSet.size(state.pending_remote_cands) == 0 and state.pending_eoc == true do
-        ice_agent = ExICE.Priv.ICEAgent.end_of_candidates(state.ice_agent)
+        ice_agent = ICEAgent.end_of_candidates(state.ice_agent)
         {:noreply, %{state | ice_agent: ice_agent, pending_eoc: false}}
       else
         {:noreply, state}
